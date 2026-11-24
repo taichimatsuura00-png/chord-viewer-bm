@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         マイコード譜ビューア
 // @description  U-FRET・Ultimate Guitarのコード譜を広告なしで表示し、自分用の曲帳に保存する（曲帳: https://www.ufret.jp/?mysongbook ）
-// @version      1.7.0
+// @version      1.8.0
 // @match        https://www.ufret.jp/*
 // @match        https://ufret.jp/*
 // @match        https://*.ultimate-guitar.com/*
@@ -106,7 +106,10 @@ globalThis.ChordDB = [{"major":["x32010:032010:1:","113331:112341:3:1","xx1114:0
   /* ダブルタップでの拡大をオフ（2本指での拡大はそのまま使える） */
   .cv-root, .cv-root * { touch-action: manipulation; }
   .cv-bar { position: sticky; top: 0; z-index: 2; background: var(--bar); backdrop-filter: blur(8px); border-bottom: 1px solid var(--line);
-    padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center; }
+    padding: 10px 16px; display: flex; flex-wrap: wrap; gap: 8px 16px; align-items: center;
+    transition: transform .25s ease; will-change: transform; }
+  /* 下にスクロールしている間はヘッダーをしまう（上にスクロールすると戻る） */
+  .cv-bar.cv-hide { transform: translateY(calc(-100% - 2px)); }
   .cv-head { flex: 1 1 220px; min-width: 0; cursor: pointer; }
   .cv-title { font-size: 18px; font-weight: 700; margin: 0; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
   .cv-artist { font-size: 13px; color: var(--muted); margin: 2px 0 0; }
@@ -544,11 +547,45 @@ globalThis.ChordDB = [{"major":["x32010:032010:1:","113331:112341:3:1","xx1114:0
       toastTimer = setTimeout(() => toastEl.classList.remove('cv-show'), 1800);
     }
 
+    // ヘッダーの出し入れ：下へスクロールでしまい、上へスクロールで出す（自動スクロール中もしまう）
+    // 設定を開いている間と、一番上付近では常に出しておく
+    const scrollTargets = [];
+    let lastY = 0, travel = 0;
+    function setBarHidden(hide) {
+      if (hide && bar.classList.contains('cv-open')) hide = false;
+      bar.classList.toggle('cv-hide', hide);
+    }
+    function onScroll() {
+      if (!root.isConnected) return unlistenScroll();
+      const y = scroller.scrollTop;
+      const dy = y - lastY;
+      lastY = y;
+      if (y <= bar.offsetHeight) { travel = 0; return setBarHidden(false); }
+      // 向きが変わったら距離を数え直し、少し動いただけでは切り替えない
+      travel = (Math.sign(dy) === Math.sign(travel) ? travel : 0) + dy;
+      if (travel > 12) setBarHidden(true);
+      else if (travel < -12) setBarHidden(false);
+    }
+    function unlistenScroll() {
+      for (const t of scrollTargets) t.removeEventListener('scroll', onScroll);
+      scrollTargets.length = 0;
+    }
+    if (opts.autoHideBar !== false) {
+      // スクロールするのはページ全体か、曲帳の中の枠なので、外側の要素すべてで受け取る
+      for (let n = container; n; n = n.parentNode || n.host) {
+        if (n.nodeType === 1) { n.addEventListener('scroll', onScroll, { passive: true }); scrollTargets.push(n); }
+      }
+      window.addEventListener('scroll', onScroll, { passive: true });
+      scrollTargets.push(window);
+      lastY = scroller.scrollTop;
+    }
+    more.addEventListener('click', () => setBarHidden(false));
+
     update();
     return {
       toast,
       settings: () => Object.assign({}, s),
-      destroy() { toggleScroll(false); window.removeEventListener('keydown', onKey); container.innerHTML = ''; },
+      destroy() { toggleScroll(false); unlistenScroll(); window.removeEventListener('keydown', onKey); container.innerHTML = ''; },
     };
   }
 
@@ -839,7 +876,7 @@ globalThis.ChordDB = [{"major":["x32010:032010:1:","113331:112341:3:1","xx1114:0
       };
       const drawPreview = () => {
         if (preview) preview.destroy();
-        preview = ChordView.mount(previewEl, read(), { scroller: previewEl, tapToScroll: false });
+        preview = ChordView.mount(previewEl, read(), { scroller: previewEl, tapToScroll: false, autoHideBar: false });
       };
       let t = 0;
       for (const input of Object.values(f)) input.addEventListener('input', () => { clearTimeout(t); t = setTimeout(drawPreview, 250); });
@@ -914,7 +951,7 @@ globalThis.ChordDB = [{"major":["x32010:032010:1:","113331:112341:3:1","xx1114:0
 (() => {
   const SONGBOOK_URL = 'https://www.ufret.jp/?mysongbook';
   // バージョン（ユーザースクリプトはビルド時に埋め込む）
-  const VERSION = ChordView.env === 'extension' ? chrome.runtime.getManifest().version : '1.7.0';
+  const VERSION = ChordView.env === 'extension' ? chrome.runtime.getManifest().version : '1.8.0';
   const isUfret = /(^|\.)ufret\.jp$/.test(location.hostname);
   const isUG = /(^|\.)ultimate-guitar\.com$/.test(location.hostname);
   const isSongPage = () => (isUfret && location.pathname === '/song.php') || (isUG && location.pathname.startsWith('/tab/'));
